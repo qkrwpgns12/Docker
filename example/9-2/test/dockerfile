@@ -1,0 +1,3 @@
+FROM busybox
+MAINTAINER Jehoon Park <qkrwpgns12@naver.com>
+VOLUME /var/lib/mysql

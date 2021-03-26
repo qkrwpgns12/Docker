@@ -1,0 +1,23 @@
+mkdir -p /root/registry_data
+mkdir -p /root/nginx_data
+cd /root/nginx_data
+docker run --restart always -d -v /root/registry_data:/var/lib/registry --name registry registry
+
+yum install httpd-tools -y
+htpasswd -c registry.password jhpark 
+
+openssl genrsa -out client-crt-key.key 2048
+openssl req -x509 -new -nodes -key client-crt-key.key -days 10000 -out client-crt.crt
+
+
+
+openssl genrsa -out server-nginx.key 2048
+openssl req -new -key server-nginx.key -out my-registry.csr
+
+
+echo subjectAltName = IP:10.100.0.101,IP:127.0.0.1,DNS:node1.example.com > extfile.cnf
+openssl x509 -req -in my-registry.csr -CA client-crt.crt -CAkey client-crt-key.key -CAcreateserial -out server-nginx.crt -days 10000 -extfile extfile.cnf
+cp client-crt.crt /etc/pki/ca-trust/source/anchors/client-crt.pem
+update-ca-trust
+
+docker run -d -p 443:443 --link registry:registry -v /root/nginx_data:/etc/nginx/conf.d --name nginx nginx:1.9

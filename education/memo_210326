@@ -1,0 +1,80 @@
+[ Container Security ]
+쿠버네티스의 namespace와 도커의 namespace의 의미는 조금 다르다.
+
+/sys/fs/cgroup/memory/docker
+cgroup에서 docker tasks가 실제로 동작하는 것이고, 나머지값들은 리소스
+
+컨테이너를 생성하게되면, /sys/fs/cgroup/memory/docker/컨테이너UUID로
+생성되며 리소스들을 볼 수 있다.
+
+swap을 안쓰게 되면, 메모리에 빈공간을 만들기위해 cache, buffer 순서로 지워버린다.
+그러면 오히려 자주쓰이는 파일들을 계속 불러오는 과정을 거치면서 퍼포먼스가 떨어진다.
+
+swap은 60+2/m + @ > 100일 경우 사용, 그래서 보통 메모리 80% 사용하면 swap을 사용한다.
+60??
+
+컨테이너를 실행할때 리소스 제한 (Memory, CPU, IO)
+파일시스템 보안 (볼륨 매핑시 Read-Only)
+Capbility 할당 (루트만이 할수있는 권한 일부를 위임 혹은 회수) - man capabilities
+
+docker --privileged 권한은 보안상 쓰면 안되지만, 컨테이너가 HOST 시스템의 root권한이 필요할 경우 사용
+쿠버네티스가 이 기능을 사용한다.
+
+ulimit의 기능을 활용가능
+
+NAT 서비스환경에서
+컨테이너 -> 외부: 마스커레이드
+외부 -> 컨테이너 : 포트 포워딩
+
+컨테이너 생성 시 iptables에 생성되는 룰들이 있음 (iptables -t nat -L DOCKER -v)
+iptables -t nat -L -v
+ex) nginx 80:80 웹서비스를 실행 전, 후 비교
+
+iptables에 rule들이 있는데, firewalld 를 stop 해버리면 rule들이 모두 날아간다.
+docker daemon을 재시작하면 다시 rule들이 적용된다.
+>> 방화벽을 내리고 구축을 시작하는 것이 좋음.
+
+8-31 page 유심히 보면 좋음
+
+기본적으로 생성된 컨테이너들은 docker0상에 있으면 전부 통신이 되지만
+daemon.json을 통해 통신을 제한할 수 있다.
+
+통신을 제한 한 후 컨테이너 실행 시 --link를 이용해 링크를 맺으면 해당 컨테이너들은 통신이 가능하다.
+
+8-31 page 부터 유심히 보면 좋음
+
+실수로 iptables를 내리거나, iptables가 정책상 동작하지 않을때를 대비해
+docker-proxy가 daemon형태로 작동하며 DNAT (외부->내부) 포워딩 기능을 하고있음.
+// kube-proxy 기능과 비슷
+
+==========================================================================
+[ Docker Monitoring ]
+docker stats, top, exec, logs - 컨테이너 관련 모니터링
+docker events - 도커 데몬 관련 모니터링 (컨테이너 생성, 연결, 삭제)
+                -f 로 특정 컨테이너 모니터링 가능
+
+free는 컨테이너 전용 명령이 아니다
+Memory를 500을 할당한 컨테이너 내부에서 free로 380을 쓰고있다고해서 남은것이 아님.
+
+
+docker inspect -f '{{.NetworkSettings.IPAddress}}' web3
+= docker inspect --format='{{.NetworkSettings.IPAddress}}' web3
+
+============================================================================
+[ docker compsoe ]
+tool, 설치필요
+
+yaml 파일의 같은 레벨은 순서에 상관없다. (top-down 방식이아님)
+
+dockerfile, docker-compose.yaml 작성
+.dockerignore에 dockerfile, docker-compose.yaml 등록.
+
+docker-compose up -d
+docker-compose ps
+
+docker-compose로 등록된 컨테이너는 docker, docker-compose ps로 모두 보이지만
+docker로 등록한 컨테이너는 docker-compose ps에는 보이지 않는다.
+
+docker-compose가 실행되면서 default bridge network를 만든다.
+docker network ls 확인.
+

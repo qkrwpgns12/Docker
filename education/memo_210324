@@ -1,0 +1,124 @@
+Base Image를 pull해서 수정해서 하나의 새로운 이미지를 만들어 push를 하면
+달라진 부분만 push되고
+실제로 변경된 이미지를 다운받을경우에는 BaseImage에 달라진 부분을 더해서
+다운로드 되는것.
+
+그래서 실제로 registry에 많은 공간할당이 필요하지가 않음.
+
+도커의 장점
+1. CRI가 있다면 어디서든 실행가능
+2. Layer
+3. Hub
+
+컨테이너 빌드까지는 도커를 쓰는것이 편리
+쿠버네티스를 쓸경우 도커 엔진을 쓰는것은 다시 생각.
+쿠버네티스를 쓸때는 엔진은 무엇을 써도 상관없기 때문.
+
+베이스 이미지를 다운받을떄 사이즈가 있는 레이어만 다운받는다.
+실제 레이어가 2개더라도 0바이트인 레이어는 다운받지 않는다.
+????????????????????????
+
+hub 베이스 이미지 검색시 이미 베이스위에 올린 이미지는 베이스로 검색x
+git > dockek hub로 repository build 가능
+
+docker run -p 80:80  host:container 포트맵핑
+docker run -v /webdata:/usr/share/nginx/html   host:container 디렉터리 마운트
+
+docker run -d --restart always -p 5000:5000 -v /images:/var/lib/registry --name registry registry:2
+// 호스트쪽 디렉터리 없으면 생성
+// --restart always : 도커 데몬이 stop후 restart 되면 컨테이너들도 자동으로 restart
+   default는 도커데몬 stop 시 컨테이너 all stop
+             도커데몬 restart시 컨테이너 변화X
+
+
+docker image tag ubuntu:latest docker.example.com:5000/ubuntu:latest
+docker push docker.example.com:5000/ubuntu:latest
+// FQDN으로 했을경우, 도커 허브의 repository로 가지않고
+   해당 경로로 push하게된다.
+
+/images 확인.
+
+외부에서도 push 가능 (node1) -> (docker)
+// 먼저 /etc/docker/daemon.json 파일을 써서 대역대를 열어줘야함.
+   daemon restart 필요
+
+docker search는 hub만 검색가능하다.
+========================================================================
+[ Docker File ]
+docker build시 step1개 당 Layer 1개
+
+
+A; B; 는 A다음 B 순차실행
+A && B는 A가 실행되어야 B를실행
+
+RUN A && \
+    B
+
+RUN 작업1
+RUN cahce remove
+// 작업1에 대한 cache는 지워지지 않음. >> Layer가 다르기 떄문.
+
+>> RUN 작업1 && cache remove >> 작업1에 대한 캐시데이터 삭제
+
+ADD와 COPY는 기능이 같지만,
+COPY는 로컬복사만, ADD는 네트워크(ftp URL)에서 복사가 가능하며, (HTTP는 안됨)
+COPY는 압축한 그대로, ADD는 압축해제를 해서 복사가 된다.
+
+CMD로 명령이 실행되게 해놓은 컨테이너 이미지는
+후에 컨테이너 생성시 명령을 명시할 경우,  마지막에 명시한 명령으로 대체된다.
+
+ENTRYPOINT로 명령이 실행되게 해놓은 컨테이너 이미지는
+반드시 실행되게 해놓은 명령이 실행되며 , 마지막에 명시한 명령은 인자값으로 인식한다.
+ENRRYPOINT로 해놓은 명령을 컨테이너 생성시 바꾸고싶다면 --entrypoint 옵션을 이용
+
+명령은 고정하고, argument만 바꾸고 싶을경우
+ENTRYPOINT ['ping']
+CMD ['localhost'] 로 DOCKERFILE을 생성하고
+docker run --rm nginx:1.14 8.8.8.8 로 생성시 localhost -> 8.8.8.8로 대체된다.
+
+
+EXPOSE를 안쓴다고 해서 기본포트가 안열리는 것은 아님.
+EXPOSE는 docker ps 에서 PORT란에 명시되듯이, 그냥 해당 포트를 노출하는 것.
+EXPOSE 443 형식으로 숫자만있으면 TCP로 인식, UDP의 경우에는 443/udp로, 반드시
+udp임을 명시해주어야한다.
+
+USER 명령을 실행할 사용자 계정 설정
+컨테이너의 root와 시스템의 root는 서로다른 root이지만,
+컨테이너의 root가 컨테이너를 벗어나면 시스템의 root와 동일한 권한이기때문에
+보안상 root를 안쓰고 USER를 통해 다른 유저를 이용하게 한다.
+
+일반적인 컨테이너는 모든 사람이 사용하는데 문제없도록
+root를 통해 명령을 실행하지만, product환경에서는 root대신 다른 유저를 사용하도록 한다.
+
+ONBUILD 명시되어있는 이미지를 BASE 이미지로 이용하여 다른이미지가 생성될떄 실행된다.
+
+644 a.sh
+./a.sh 는 현재 쉘에서 실행하란 의미이기 떄문에 실행권한이 없어 실행되지 않는다.
+/bin/bash a.sh는 실행권한이 있는 bash라는 쉘을 서브프로그램으로 실행해서 a.sh를 실행하기 떄문에 되는 것
+
+dockerfile 작성시
+빌드관련, 러닝관련 나누어 빌드 -> 러닝 순으로 top-down으로 실행순서를 맞추는 것이 좋다.
+
+*요약
+1. Container Run 시, 포트맵핑(-p), 디렉터리 마운트(-v)
+
+2. Docker Image
+
+3. Private repository생성 (hub아닌 리눅스 내 개인저장소)
+   - registry 이미지 사용
+   - 이미지 이름 계정명/이미지명 변경 후 push
+   - 외부 -> 내부 시 docker 대역 오픈 필요
+
+4. registry, nginx ssl 인증서 기반 Private repository 생성 과제
+   - front : nginx
+   - back  : registry
+   
+5. Dockerfile
+   - FROM, ADD, COPY, CMD, ENTRYPOINT, USER, ENV, ARG, ONBUILD, VOLUME, EXPOSE, LABEL
+     WORKDIR, STOPSIGNAL, HEALTHCHECK, SHELL
+
+   - .dockerignore 이미지 생성 작업 중 불필요한 파일 로드X
+   - docker build할 경우 디렉터리를 만들어 하는 이유
+     docker build시 현재 디렉터리를 스캔을 하기떄문에 느릴 수 있거나, 안될수가 있기때문.
+   
+   

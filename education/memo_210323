@@ -1,0 +1,233 @@
+/var/lib/docker/{containers, image, overlay2}
+
+/var/lib/docker/overlay2에서 어느 UUID가 특정 Layer인지는 알 수 없다.
+그저 다른 UUID를 통해 다르다는것만 구분한다.
+
+docker images 명령은 /var/lib/docker/image에 있는 이미지들을 보여주는 것
+docker inspect [image명]으로 상세 설정을 볼 수 있음.
+
+container로 올리는 ubuntu 이미지는 Base 명령(apt-get, ls etc)들만 존재.
+커널과 통신하는 core 명령들은 없음.
+
+CentOS 커널 위에 컨테이너로 ubuntu를 올릴 수 있는 이유
+// 커널과 통신하는 명령이 없는 이미지이기때문.
+
+MergedDir 위에서 본관점으로 UFS로 보이는 UUID
+UpperDir과 같음 = RW 레이어
+WorkDir 3개 모두 RW레이어
+
+
+최상단 RW레이어는 create할때 생성되며, rm시에 사라지게 된다.
+최상단 레이어는 보통 0Byte
+(명령은 쌓이지만, 실제 데이터가 저장되는 것은 아니기 떄문)
+
+
+컨테이너는 다른 기술을 사용하지 않을땐 생성떄마다 ip가 바뀐다
+시스템의 hosts파일을 최상단에서 볼수있게끔 하는 기술이 있음
+
+컨테이너 UUID의 12문자 = 컨테이너 hostname
+
+running되고 있는 컨테이너는 host system (10.100.0.5) 입장에서는
+nginx -g daemonoff 가 기동되고있는 pid를 가지는 하나의 프로세스
+//VM 과의 차이점.
+
+OS위에 가상화를 위한 무언가를 올리고 VM을 올려서 사용하는 것과
+OS상에서 하나의 프로세스로 동작하는 컨테이너의 차이
+
+
+[root@docker ~]# ps -ef | grep nginx
+root     22070 22048  0 04:52 ?        00:00:00 nginx: master process nginx -g daemon off;
+101      22104 22070  0 04:52 ?        00:00:00 nginx: worker process
+root     31403 30465  0 21:01 pts/1    00:00:00 grep --color=auto nginx
+
+컨테이너에서 사용할 수 있는 자원 사용량, 최대사용량을 지정할 수 있는데
+>> cgroup에서 지원하는 기술
+
+프로세스인데 통신을 하기 위해서는 자체적으로 IP를 가져야 하는데
+컨테이너는 자체적으로 6가지의 isolate 값을 가지고 동작한다.
+>> pid, user, ipc, network, uts(hosts, resolv), mount
+   namespace가 지원해주는 기술
+
+network interface를 sandbox가 지원, ip, gateway, port 등등
+http://cloudrain21.com/container-networking-model 참고
+
+컨테이너는 username 인증을 하지 않는다. root로 접속
+쉘을 제공해주는 컨테이너를 실행할 때는 -it를 이용해
+interactive 터미널로 실행한다.
+유저정보가 틀려서 접속이 안될경우 쉘이 죽기 떄문.
+
+PID 1이 종료되면 시스템이 종료된다.
+컨테이너 마다 자신의 PID를 가지는데
+ubuntu의 PID 1은 /bin/bash이다. 그래서 /bin/bash에서 exit를 할경우
+1번 pid인 /bin/bash가 죽어버려 컨테이너가 종료된다.
+
+두번째 예로, nginx의 pid1은 nginx이다. nginx가 종료되면
+컨테이너가 종료된다.
+
+호스트 시스템 및 각 컨테이너마다 root가 있지만 서로 다른 유저이다.
+컨테이너의 root는 하드웨어, 커널을 컨트롤할 수 없다.
+(권한이 최소화된 root)
+
+컨테이너의 RW레이어에서 RO레이어의 무언가를 지우면
+RW레이어에서 봤을때 지워진 것처럼만 보이는 것이지 실제로
+지워지지는 않는다. (UFS)
+
+RW레이어는 start할때 마다 새로 생성되는 것이 아니다.
+RW레이어는 crate시 생성, rm시 삭제, stop을 했을경우에는 삭제되지 않는다.
+start시 기존에 쓰던 RW레이어를 다시 실행.
+
+net-filter는 커널의 기능,
+iptables를 이용해 net-filter를 사용하는 것이고,
+그것을 쉽게 해주는 인터페이스를 지원해주는 것은 firewalld
+
+docker rm -f $(docker ps -qa) // 컨테이너 일괄삭제
+alias를 걸어놓고 사용하면 편리
+ex) alias crm='docker rm -f $(docker ps -qa)'
+
+기본적으로 docker run image를 하게 되면, BASE 명령으로 실행된다
+ex) ubuntu = /bin/bash, nginx=nginx
+docker run 뒤에 해당 컨테이너에 내장되어있는 명령을 입력하면
+BASE 명령대신 해당 명령을 pid1로 실행할 수 있다.
+>> ex) docker run -it web nginx /bin/bash
+
+*주의
+container 뒤에 명시된것은 docker에서는 모두 명령으로 인식
+docker run -it --name web nginx  (O)
+docker run -it nginx --name web  (X)
+
+잘못 입력해도 컨테이너 create는 된다. start가 안됨
+
+잘못된 명령줄을 입력한후 제대로된 명령줄을 입력했을때 생성이 안된다면
+잘못된 컨테이너가 생성된것을 확인
+
+[ background or foreground? ]
+shell과 관련되어있으면 foreground (EX) DB-client
+그외에는 background (EX) DB Service
+
+*Tip-1
+ubuntu를 run 했을경우 shell로 실행되는데,
+쉘에서 빠져나올경우 pid1번인 /bin/bash가 죽어 컨테이너가 종료된다.
+ctrl+p+q를 입력할 경우 컨테이너를 종료시키지 않고 빠져나올 수 있다.
+
+pid 1번이 /bin/bash가 아닐경우는 exit를 해도 컨테이너가 종료되지는 않는다.
+
+컨테이너의 터미널은 하나다. 서로다른 터미널에서 해당 컨테이너의 터미널을 열면
+한쪽에서 하는 작업이 동시에 진행되는것으로 보인다.
+
+kubectl은 API를 통해 docker command로 치환해서 사용하는 것.
+
+docker exec web1 /bin/bash  // web1 컨테이너를 /bin/bash로 접속
+docker top web1	// 컨테이너 프로세스 정보
+docker logs web1 // 컨테이너 로그, tail과 비슷하게 사용 가능
+
+docker rename web1 w1 // 컨테이너 이름 변경
+docker cp index.html web1:/usr/share/nginx/html/index.html // 파일 복사
+docker cp web1:/usr/share/nginx/html/index.html a.html // 역으로도 가능
+docker diff web1 // web1 컨테이너의 초기생성 이후 변경된 파일 
+
+container를 isolate를 시키지 않고 호스트의 프로세스까지 모두 보이게하는방법
+docker run --pid=host --name c1 -it ubuntu
+// isolate 시키지않는 이유, 다른 컨테이너의 정보까지 수집하기위한
+   수집 혹은 모니터링 컨테이너의 경우 isolate시키지않고 모두 볼수있게끔 함
+
+ex))
+web server container - 로그 생성
+log container - 로그 수집
+한쪽에서는 생성, 한쪽에서는 수집 >> side-car
+
+docker run -it --name c3 --hostname test.example.com --rm busybox
+호스트네임도 설정 가능.
+
+docker inspect --format='{{.State.Status}}' web1
+// docker inspcet 컨테이너명 에서 볼수있는 항목들중 특정항목만 볼 수 있음
+   --format='{{.Top level.Secondlevel}}'
+
+***
+alias cip='docker inspect --format="{{.NetworkSettings.IPAddress}}" $(docker ps -qa)'
+// 모든 컨테이너의 IP주소
+***
+
+commit을 통해 RW레이어의 내용을 RO이미지와 합쳐서 새로운 이미지를 생성가능
+export를 통해 컨테이너를 단일레이어 tar파일로 생성 가능
+import를 통해 tar파일 ->  컨테이너 이미지로 생성
+
+
+--no-trunc 옵션과 함께 사용시 줄여져있는 항목들을 모두 보여줌
+
+docker logs c1
+log는 c1에서 했던 모든 작업화면(stdio) 그대로를 보여줌.
+해당 파일은 
+/var/lib/docker/container/'UUID'/'UUID'.json 파일에 log기록되어있음.
+
+docker inspect c1 에서 볼수있는 구성정보들은
+/var/lib/docker/container/'UUID'/config.v2.json
+/var/lib/docker/container/'UUID'/hostconfig.json
+에 기록되어있음.
+
+새로운 이미지 webserver:v1을 생성한 뒤 history를 보면
+dockerfile에서 작업한 내용은 남아있지만
+쉘에서 httpd를 설치했던 작업은 나와있지않다.
+>> 따라서 검증된 이미지를 사용하는 것이 안전
+
+docker commit c1 qkrwpgns12/webserver:v1
+hub.docker.com 내 계정에 push 하기위해서는 이미지 이름앞에 내 계정 명시필요
+컨테이너 이름을 바꿀수는 있지만, 컨테이너 이미지 이름을 변경할 순 없다.
+
+========================================================================
+hub.docker.com 연동
+
+docker login
+docker push qkrwpgns12/webserver:v1
+docker
+
+docker의 로그인정보 ~/.docker/config.json
+========================================================================
+
+docker registry를 사용할 수 없는 환경일 경우
+
+사내에 repository를 만들어 공유해서 사용할 수 있다.
+하지만 타사 사람들에게 공유를 해야할 경우에는 tar파일로 만들어서 전송.
+
+export를 통해 single layer(raw data)로 만들어 tar로 묶는다.
+docker container export qkrwpgns12/webserver:v1 -o webserver.tar
+
+import를 통해 image 추가
+docker image import webserver.tar web-testserver:v1
+
+docker inspect web-testserver:v1 >> 레이어 1개 (단일레이어)
+
+docker save qkrwpgns12/webserver:v1 -o testweb.tar
+docker image load -i testweb.tar
+
+docker images
+docker inspect [이미지명] >> 레이어 그대로 (멀티레이어)
+
+*요약
+1. Docker Container Architecture
+   - 컨테이너 RW, RO레이어
+
+2. Docker 관련 파일
+   - /var/lib/docker/containers 및 하위파일
+     UUID.json : container log
+     config.v2.json : inspect (namespace)
+     hostconfig.json : inspect (cgroup)
+
+   - /var/lib/docker/overlay2
+
+3. 컨테이너 PID
+   - 컨테이너 PID namespace 공유
+   - side-car
+   - 로그 수집용 컨테이너 생성
+
+4. Registry 연동
+   - docker login
+   - docker push, pull
+
+5. 여러가지 명령
+   - ispect, log, run, create, start, attach, dettach, image, rm, top, exec
+     history, tag, diff
+
+6. 나만의 container 이미지 생성 
+   - commit
+   - 단일레이어: import, export
+   - 멀티레이어: save, load

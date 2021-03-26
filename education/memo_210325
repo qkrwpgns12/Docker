@@ -1,0 +1,150 @@
+HOST 볼륨 마운트가 된 Service용 Contatiner가 HOST볼륨에는
+보안상 쓰기가 안되어야한다.
+HOST 볼륨 -> (읽기) -> Container -> (서비스) 만되어야지
+반대로, Container -> (쓰기) -> HOST볼륨이 되어버리면 공격받을 수 있다.
+
+Default Option : RW (inspect로 확인)
+
+볼륨 마운트시 호스트 볼륨을 생략하면, source Volume은 자동으로 생성된다.
+// HOST의 /var/lib/docker/Volumes/UUID/_data가 생성되며 해당 경로에 데이터가 저장된다.
+
+-v를 지정하지 않았는데 inspect상에 source volume이 지정되어있다면 dockerfile에 지정된것.
+
+데이터 전용 컨테이너는 Running 상태가 아니어도됨, create 상태 이기만 하면 사용 가능
+데이터 전용 컨테이너를 생성해 여러 서비스 볼륨을 마운트 해놓고,
+여러 서비스 컨테이너 생성시  --volumes-from 'data container' 지정시 해당 컨테이너 볼륨 경로 사용가능.
+
+docker inspect db | grep -A 3 -i source
+A옵션을 추가로 주면 source로 찾은 라인 뒤에 3라인을 더 덧붙여 출력
+
+/var/lib/docker/volumes 에는 디폴트로 생성된 볼륨들이 존재.
+docker volume prune을 하면 사용하지 않는 볼륨 삭제.
+docker volume rm 볼륨명으로 삭제해도 된다.
+
+docker volume create webdata  // /var/lib/docker/webdata가 생성되며
+
+docker run -d webdata:/usr/share/nginx/html --name web nginx
+/webdata대신 webdata를 사용하게되면, 생성한 로컬볼륨 webdata로 마운트된다.
+
+항상 물리적인 장치의 정책이 우선.
+ex) 스토리지 RO, Docker Container Volume RW면, 스토리지정책인 RO가 우선된다.
+
+파일도 마운트 할수 있지만 자동으로 생성되는 것은 디렉터리만.
+파일은 미리 생성을 해놓아야한다.
+
+
+*구축전 생각해야될 부분중 하나
+/var/lib/docker(이미지, 컨테이너 저장공간)
+/var/lib/docker/volumes(어플리케이션 데이터 저장공간)
+따로 LVM 파티션으로 분리 구성해놓으면 확장성이 좋음
+
+
+==================================================================================
+[ Docker Network ]
+
+1. 커널의 namespace 기술로 프로세스(컨테이너) 마다 네트워크 지원 (sandbox)
+2. 그것의 interface는 endpoint (여러개일수 있다.)
+3. docker데몬이 실행될 때, 호스트에 docker0이라는 게이트웨이 인터페이스가 생성
+   - NAT 기반으로 프로세스에 IP할당
+   - 실제로 할당하는 IP가 아니기때문에, IP주소라고 하기보다는 endpoint라고 한다.
+
+방화벽이 실행된 채로 도커데몬을 올린 후 방화벽을 내려버리면
+도커데몬에서 사용하고있던 iptables가 지워진다.
+>> 도커데몬을 restart하면 다시 생성되지만
+   구축전에 내려놓으면 도커데몬은 단독으로 iptables를 만든다.
+   
+docker inspect c1에서
+EndpointID가 있다는 것 = MAC, Gateway가 있다는 것
+
+Gateway 주소와 Host IP주소 대역이 같을경우, Gateway(docker0) 주소를 바꾸는 방법
+/etc/docker/daemon.json에 원하는 대역의 bip를 기입
+{
+	"bip": "192.168.100.1/24"
+}
+>> host의 docker0의 ip주소가 172.17.0.1 >> 192.168.100.1 로 바뀐다.
+
+바뀌어서 인식된 IP주소는 daemon.json을 지운다고 원래대로 돌아가지는 않는다.
+되돌리려면 다시 원래의 IP대역을 기입
+
+=========================================================================================
+[ Network Driver ]
+
+docker run시 --network를 명시하지않으면 default는 bridge
+--network=host: 컨테이너가 HOST의 네트워크를 사용
+--network=none: endpoint를 사용하지 않는다. 통신불가능
+                데이터 저장소같이 네트워크가 필요없는 컨테이너에 사용
+
+macvlan bridge는 MAC만을 보고 통신을 한다.
+HOST나 외부와는 통신이 안되지만, 다른 컨테이너 인터페이스간 통신 속도는 빠르다.
+macvlan은 기본적으로 생성되어있는 network driver가 아니기 때문에 생성해주어야한다.
+docker network create --driver macvlan --subnet 192.168.100.0/24 --gateway 192.168.100.254 mymacvlan
+// 게이트웨이와도 통신이 안되며, 컨테이너간 내부통신만 가능
+
+overlay :  multi host network
+도커 호스트가 여러개 있을 경우 컨테이너간 통신
+1번 호스트 컨테이너 ip 172.17.0.2
+2번 호스트 컨테이너 ip 172.17.0.2 로 같을 경우가 발생할 수 있음 
+이럴때 포워딩 역할을 해주는 네트워크 : vxlan, 그 한 분야가 overlay
+// docker swarm을 위한 기능이기 때문에
+   쿠버네티스를 쓸경우 Weave-net 같은 다른 네트워크 기술을 사용해야한다.
+
+container ip를 static으로 줄수는 없나??
+>> docker 데몬이 그런 기능을 제공하지않음 (docker0)
+>> 고정하고싶다면 docker0 bridge를 사용하지 않고 다른 user define bridge 네트워크를 사용하면 된다.
+   ex) docker run -it --name c1 --net=mynet --ip 10.100.100.100 busybox
+       // driver 생략시 default bridge로 생성, static으로 ip설정
+
+여러개의 컨테이너가 동일 ip를 가질수는 없나??
+--net=container:"컨테이너명" 지정시 해당 컨테이너의 ip를 동시에 사용할 수 있다.
+// 쿠버네티스의 pod 구성과 비슷, pod내의 여러개의 컨테이너가 동일한 ip
+
+컨테이너를 통한 컨테이너 to 컨테이너 네트워크 연결
+컨테이너1, 2, 3 중 2를 중간에서 라우트 역할을 하게 해주려면 차단 룰을 지워줘야한다.
+
+*endpoint는 진짜 네트워크가 아니기 때문에 네트워크 통신을 하는것이 아니다
+ kubernetes를 쓰려면 multi host enpoint간 통신을 위한 CNI가 필요
+ 어플리케이션 계층에 source endpoint, dest endpoint 정보를 담아 CNI를 통해 통신
+
+[ 포트매핑, EXPOSE ]
+docker run시 포트 여러개면 -p 옵션을 여러개 쓰거나 범위 지정가능
+-p containerPort 만 기입하면, 컨테이너는 80으로 맵핑되고, 호스트 포트는 random으로 생성된다.
+
+-P만 입력하면 dockerfile에서 명시된 expose포트를 찾아 알아서 할당된다.
+// dockerfile에 EXPOSE포트를 생략하면 안되는 이유
+
+==============================================================================
+컨테이너 링크
+
+docker run --link container이름:별명 옵션 추가시
+상대 컨테이너의 ip, hostname을 /etc/hosts에 추가해주고
+상대 컨테이너의 환경변수 정보까지 가져온다.
+
+
+
+
+*요약
+1. Service용 Container nginx, 로그 수집용 Container generator 예제 (Side-car)
+
+2. Volume
+   - dockerfile에서 VOLUME을 쓰거나 cli에서 -v 옵션으로 지정하는거나 동일
+     우선순위는 나중에 사용된것이 적용되므로, cli가 높다
+ 
+   - 데이터 전용: 여러개 서비스용 볼륨을 마운트해놓고 데이터 전용으로만 사용.
+     데이터 전용 컨테이너는 create만 되어있으면 사용 가능.
+     데이터 전용 컨테이너를 사용하기 위해서 서비스 컨테이너 생성시 --volumes-from 옵션 사용
+
+   - 컨테이너 볼륨 저장공간: /var/lib/docker/volumes
+     지정되지 않은 default volume도 UUID형식으로 여기에 저장된다.
+
+3. Network
+   - sandbox, endpoint, host의 gateway(docker0)
+   - Network Driver (bridge, host, null, macvlan, overlay)
+   - User Defined Network
+   - 컨테이너간 네트워크 공유 : --net=container:컨테이너명 (pod 구성과 비슷)
+   - 멀티 호스트 네트워크: overlay는 docker swarm용, 쿠버네티스를 쓸경우에는 Weave, Flannel과 같이
+     다른 플러그인을 사용해야한다.
+
+   - p hostPort:ContainerPort,  -p containerPort, -P 의차이
+                                 랜덤 HOST port   Dockerfile EXPOSE 포트
+
+   - 컨테이너 링크: 링크대상의 ip hostname를 /etc/hosts에 등록, 환경변수 가져와서 run
